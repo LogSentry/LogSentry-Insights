@@ -229,17 +229,20 @@ void *process_pcap(void *arg) {
         src_ip.s_addr = flows[i].key.src_ip;
         dst_ip.s_addr = flows[i].key.dst_ip;
         fprintf(data->output_file, "%s,%s,%u,%u,%u,%lu,%lu,%lu,%lu,%u,%u,%u,%u,%.2f,%.2f,%u,%u,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%u,%u,%u,%u,%lu,%lu,%.2f,%.2f,%.2f,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
-                inet_ntoa(src_ip), inet_ntoa(dst_ip), ntohs(flows[i].key.src_port), ntohs(flows[i].key.dst_port),
-                flows[i].key.protocol, flows[i].packet_count, flows[i].byte_count, flows[i].fwd_packet_count, flows[i].bwd_packet_count,
-                flows[i].fwd_packet_length_min, flows[i].fwd_packet_length_max, flows[i].bwd_packet_length_min, flows[i].bwd_packet_length_max,
-                flows[i].fwd_packet_length_mean, flows[i].bwd_packet_length_mean, flows[i].fwd_psh_flags, flows[i].bwd_psh_flags,
-                flows[i].flow_bytes_per_sec, flows[i].flow_packets_per_sec, flows[i].flow_iat_mean, flows[i].flow_iat_std,
-                flows[i].flow_iat_max, flows[i].flow_iat_min, flows[i].fwd_packet_length_std, flows[i].bwd_packet_length_std,
-                flows[i].avg_fwd_segment_size, flows[i].avg_bwd_segment_size, flows[i].subflow_fwd_packets, flows[i].subflow_bwd_packets
-                flows[i].subflow_fwd_bytes, flows[i].subflow_bwd_bytes, flows[i].init_win_bytes_forward, flows[i].init_win_bytes_backward,
-                flows[i].active_mean, flows[i].idle_mean);
-    }
-    pthread_mutex_unlock(data->file_mutex);
+        inet_ntoa(src_ip), inet_ntoa(dst_ip), ntohs(flows[i].key.src_port), ntohs(flows[i].key.dst_port),
+        flows[i].key.protocol, flows[i].packet_count, flows[i].byte_count, flows[i].fwd_packet_count, flows[i].bwd_packet_count,
+        flows[i].fwd_packet_length_min, flows[i].fwd_packet_length_max, flows[i].bwd_packet_length_min, flows[i].bwd_packet_length_max,
+        flows[i].fwd_packet_length_mean, flows[i].bwd_packet_length_mean, flows[i].fwd_psh_flags, flows[i].bwd_psh_flags,
+        flows[i].flow_bytes_per_sec, flows[i].flow_packets_per_sec, flows[i].flow_iat_mean, flows[i].flow_iat_std,
+        flows[i].flow_iat_max, flows[i].flow_iat_min, flows[i].fwd_packet_length_std, flows[i].bwd_packet_length_std,
+        flows[i].avg_fwd_segment_size, flows[i].avg_bwd_segment_size, flows[i].subflow_fwd_packets, flows[i].subflow_bwd_packets,
+        flows[i].subflow_fwd_bytes, flows[i].subflow_bwd_bytes, flows[i].init_win_bytes_forward, flows[i].init_win_bytes_backward,
+        flows[i].active_mean, flows[i].idle_mean,
+        flows[i].fwd_urg_flags, flows[i].bwd_urg_flags, flows[i].fwd_header_length, flows[i].bwd_header_length,
+        flows[i].fin_flag_count, flows[i].syn_flag_count, flows[i].rst_flag_count, flows[i].psh_flag_count,
+        flows[i].ack_flag_count, flows[i].urg_flag_count);
+}
+pthread_mutex_unlock(data->file_mutex);
 }
 
 void pcap_to_csv(const char *pcap_file, const char *csv_file) {
@@ -284,21 +287,6 @@ void pcap_to_csv(const char *pcap_file, const char *csv_file) {
     fclose(output_file);
     pcap_close(handle);
 }
-
-#include <pcap.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <netinet/ip.h>
-#include <netinet/tcp.h>
-#include <netinet/udp.h>
-#include <arpa/inet.h>
-#include <pthread.h>
-#include <omp.h>
-#include <math.h>
-
-// ... (include all the necessary struct definitions from the previous code)
-
 void *process_pcap_chunk(void *arg) {
     struct thread_data *data = (struct thread_data *)arg;
     struct pcap_pkthdr header;
@@ -316,20 +304,17 @@ void *process_pcap_chunk(void *arg) {
         src_ip.s_addr = flows[i].key.src_ip;
         dst_ip.s_addr = flows[i].key.dst_ip;
         fprintf(data->output_file, "%s,%s,%u,%u,%u,%lu,%lu,%lu,%lu,%u,%u,%u,%u,%.2f,%.2f,%u,%u,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%u,%u,%u,%u,%lu,%lu,%.2f,%.2f,%.2f,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
-        inet_ntoa(src_ip), inet_ntoa(dst_ip), ntohs(flows[i].key.src_port), ntohs(flows[i].key.dst_port),
-        flows[i].key.protocol, flows[i].packet_count, flows[i].byte_count, flows[i].fwd_packet_count, flows[i].bwd_packet_count,
-        flows[i].fwd_packet_length_min, flows[i].fwd_packet_length_max, flows[i].bwd_packet_length_min, flows[i].bwd_packet_length_max,
-        flows[i].fwd_packet_length_mean, flows[i].bwd_packet_length_mean, flows[i].fwd_psh_flags, flows[i].bwd_psh_flags,
-        flows[i].flow_bytes_per_sec, flows[i].flow_packets_per_sec, flows[i].flow_iat_mean, flows[i].flow_iat_std,
-        flows[i].flow_iat_max, flows[i].flow_iat_min, flows[i].fwd_packet_length_std, flows[i].bwd_packet_length_std,
-        flows[i].avg_fwd_segment_size, flows[i].avg_bwd_segment_size, flows[i].subflow_fwd_packets, flows[i].subflow_bwd_packets,
-        flows[i].subflow_fwd_bytes, flows[i].subflow_bwd_bytes, flows[i].init_win_bytes_forward, flows[i].init_win_bytes_backward,
-        flows[i].active_mean, flows[i].idle_mean,
-        flows[i].fwd_urg_flags, flows[i].bwd_urg_flags, flows[i].fwd_header_length, flows[i].bwd_header_length,
-        flows[i].fin_flag_count, flows[i].syn_flag_count, flows[i].rst_flag_count, flows[i].psh_flag_count,
-        flows[i].ack_flag_count, flows[i].urg_flag_count);
-}
-pthread_mutex_unlock(data->file_mutex);
+                inet_ntoa(src_ip), inet_ntoa(dst_ip), ntohs(flows[i].key.src_port), ntohs(flows[i].key.dst_port),
+                flows[i].key.protocol, flows[i].packet_count, flows[i].byte_count, flows[i].fwd_packet_count, flows[i].bwd_packet_count,
+                flows[i].fwd_packet_length_min, flows[i].fwd_packet_length_max, flows[i].bwd_packet_length_min, flows[i].bwd_packet_length_max,
+                flows[i].fwd_packet_length_mean, flows[i].bwd_packet_length_mean, flows[i].fwd_psh_flags, flows[i].bwd_psh_flags,
+                flows[i].flow_bytes_per_sec, flows[i].flow_packets_per_sec, flows[i].flow_iat_mean, flows[i].flow_iat_std,
+                flows[i].flow_iat_max, flows[i].flow_iat_min, flows[i].fwd_packet_length_std, flows[i].bwd_packet_length_std,
+                flows[i].avg_fwd_segment_size, flows[i].avg_bwd_segment_size, flows[i].subflow_fwd_packets, flows[i].subflow_bwd_packets,
+                flows[i].subflow_fwd_bytes, flows[i].subflow_bwd_bytes, flows[i].init_win_bytes_forward, flows[i].init_win_bytes_backward,
+                flows[i].active_mean, flows[i].idle_mean);
+    }
+    pthread_mutex_unlock(data->file_mutex);
 
     return NULL;
 }
@@ -364,7 +349,7 @@ void pcap_to_csv(const char *pcap_file, const char *csv_file) {
         thread_data[i].handle = pcap_open_offline(pcap_file, errbuf);
         thread_data[i].output_file = output_file;
         thread_data[i].file_mutex = &file_mutex;
-        pthread_create(&threads[i], NULL, process_pcap_chunk, &thread_data[i]);
+        pthread_create(&threads[i], NULL, process_pcap, &thread_data[i]);
     }
 
     for (int i = 0; i < THREAD_COUNT; i++) {

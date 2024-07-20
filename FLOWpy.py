@@ -1,72 +1,72 @@
-import scapy.all as scapy
-import pandas as pd
+import argparse
+import csv
+import os
+import threading
+import tarfile
+from scapy.all import rdpcap, IP, TCP, UDP
 import numpy as np
-from datetime import datetime
-import sys
-import logging
-import concurrent.futures
-from collections import defaultdict
-from threading import Lock
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Set up logging for debugging
-logging.basicConfig(level=logging.DEBUG)
+# Define the fieldnames for the CSV file
+fieldnames = [
+    'source_ip', 'destination_ip', 'source_port', 'destination_port', 'protocol',
+    'packet_count', 'byte_count', 'forward_packet_count', 'backward_packet_count',
+    'forward_byte_count', 'backward_byte_count', 'forward_packet_length_min',
+    'forward_packet_length_max', 'backward_packet_length_min', 'backward_packet_length_max',
+    'forward_packet_length_mean', 'backward_packet_length_mean', 'flow_bytes_per_sec',
+    'flow_packets_per_sec', 'flow_iat_mean', 'flow_iat_std', 'flow_iat_max', 'flow_iat_min',
+    'forward_psh_flags', 'backward_psh_flags', 'forward_urg_flags', 'backward_urg_flags',
+    'forward_header_length', 'backward_header_length', 'fin_flag_count', 'syn_flag_count',
+    'rst_flag_count', 'psh_flag_count', 'ack_flag_count', 'urg_flag_count', 'down_up_ratio',
+    'average_packet_size', 'average_forward_segment_size', 'average_backward_segment_size',
+    'subflow_forward_packets', 'subflow_forward_bytes', 'subflow_backward_packets',
+    'subflow_backward_bytes', 'init_win_bytes_forward', 'init_win_bytes_backward',
+    'active_mean', 'idle_mean'
+]
 
-# Define TCP flag constants if they are not available in scapy
-FIN = 0x01
-SYN = 0x02
-RST = 0x04
-PSH = 0x08
-ACK = 0x10
-URG = 0x20
-
-# Use a lock to ensure thread-safe access to shared resources
-lock = Lock()
-
-def process_packet(packet, flows, flow_keys):
-    if packet.haslayer(scapy.IP):
-        ip = packet.getlayer(scapy.IP)
-        src_ip = ip.src
-        dst_ip = ip.dst
-        protocol = ip.proto
-        src_port = dst_port = 0
-        
-        if packet.haslayer(scapy.TCP):
-            tcp = packet.getlayer(scapy.TCP)
-            src_port = tcp.sport
-            dst_port = tcp.dport
-        elif packet.haslayer(scapy.UDP):
-            udp = packet.getlayer(scapy.UDP)
-            src_port = udp.sport
-            dst_port = udp.dport
-
-        key = (src_ip, dst_ip, src_port, dst_port, protocol)
-        
-        with lock:
-            if key not in flow_keys:
-                flow_keys.add(key)
+def process_pcap(pcap_file, output_csv):
+    flows = {}
+    
+    packets = rdpcap(pcap_file)
+    for packet in packets:
+        if IP in packet and (TCP in packet or UDP in packet):
+            ip = packet[IP]
+            transport = packet[TCP] if TCP in packet else packet[UDP]
+            
+            key = (ip.src, ip.dst, transport.sport, transport.dport, ip.proto)
+            if key not in flows:
                 flows[key] = {
+                    'source_ip': ip.src,
+                    'destination_ip': ip.dst,
+                    'source_port': transport.sport,
+                    'destination_port': transport.dport,
+                    'protocol': ip.proto,
                     'packet_count': 0,
                     'byte_count': 0,
-                    'fwd_packet_count': 0,
-                    'bwd_packet_count': 0,
-                    'fwd_byte_count': 0,
-                    'bwd_byte_count': 0,
-                    'fwd_packet_length_min': float('inf'),
-                    'fwd_packet_length_max': 0,
-                    'bwd_packet_length_min': float('inf'),
-                    'bwd_packet_length_max': 0,
+                    'forward_packet_count': 0,
+                    'backward_packet_count': 0,
+                    'forward_byte_count': 0,
+                    'backward_byte_count': 0,
+                    'forward_packet_length_min': float('inf'),
+                    'forward_packet_length_max': 0,
+                    'backward_packet_length_min': float('inf'),
+                    'backward_packet_length_max': 0,
+                    'forward_packet_length_sum': 0,
+                    'backward_packet_length_sum': 0,
+                    'forward_packet_length_mean': 0,
+                    'backward_packet_length_mean': 0,
                     'flow_bytes_per_sec': 0,
                     'flow_packets_per_sec': 0,
                     'flow_iat_mean': 0,
                     'flow_iat_std': 0,
                     'flow_iat_max': 0,
                     'flow_iat_min': float('inf'),
-                    'fwd_psh_flags': 0,
-                    'bwd_psh_flags': 0,
-                    'fwd_urg_flags': 0,
-                    'bwd_urg_flags': 0,
-                    'fwd_header_length': 0,
-                    'bwd_header_length': 0,
+                    'forward_psh_flags': 0,
+                    'backward_psh_flags': 0,
+                    'forward_urg_flags': 0,
+                    'backward_urg_flags': 0,
+                    'forward_header_length': 0,
+                    'backward_header_length': 0,
                     'fin_flag_count': 0,
                     'syn_flag_count': 0,
                     'rst_flag_count': 0,
@@ -74,151 +74,193 @@ def process_packet(packet, flows, flow_keys):
                     'ack_flag_count': 0,
                     'urg_flag_count': 0,
                     'down_up_ratio': 0,
-                    'avg_packet_size': 0,
-                    'avg_fwd_segment_size': 0,
-                    'avg_bwd_segment_size': 0,
-                    'subflow_fwd_packets': 0,
-                    'subflow_fwd_bytes': 0,
-                    'subflow_bwd_packets': 0,
-                    'subflow_bwd_bytes': 0,
+                    'average_packet_size': 0,
+                    'average_forward_segment_size': 0,
+                    'average_backward_segment_size': 0,
+                    'subflow_forward_packets': 0,
+                    'subflow_forward_bytes': 0,
+                    'subflow_backward_packets': 0,
+                    'subflow_backward_bytes': 0,
                     'init_win_bytes_forward': 0,
                     'init_win_bytes_backward': 0,
                     'active_mean': 0,
                     'idle_mean': 0,
+                    'forward_iat_total': 0,
+                    'backward_iat_total': 0,
+                    'forward_iat_count': 0,
+                    'backward_iat_count': 0,
                     'start_time': packet.time,
                     'last_time': packet.time,
-                    'fwd_packet_length_sum': 0,
-                    'bwd_packet_length_sum': 0,
-                    'fwd_packet_count': 0,
-                    'bwd_packet_count': 0
+                    'active_time': 0,
+                    'idle_count': 0,
+                    'idle_time': 0,
+                    'active_start': None,
+                    'idle_start': None,
+                    'active_count': 0,
+                    'backward_iat_mean': 0
                 }
-                logging.debug(f"New flow added: {key}")
 
             flow = flows[key]
             flow['packet_count'] += 1
             flow['byte_count'] += len(packet)
-
-            current_time = packet.time
-            if flow['packet_count'] > 1:
-                iat = current_time - flow['last_time']
-                flow['flow_iat_mean'] = (flow['flow_iat_mean'] * (flow['packet_count'] - 2) + iat) / (flow['packet_count'] - 1)
-                flow['flow_iat_std'] = np.sqrt(
-                    (flow['flow_iat_std']**2 * (flow['packet_count'] - 2) + (iat - flow['flow_iat_mean'])**2) / (flow['packet_count'] - 1)
-                )
-                flow['flow_iat_max'] = max(iat, flow['flow_iat_max'])
-                flow['flow_iat_min'] = min(iat, flow['flow_iat_min'])
-            flow['last_time'] = current_time
-
-            if src_ip < dst_ip or (src_ip == dst_ip and src_port < dst_port):
-                flow['fwd_packet_count'] += 1
-                flow['fwd_byte_count'] += len(packet)
-                flow['fwd_packet_length_min'] = min(flow['fwd_packet_length_min'], len(packet))
-                flow['fwd_packet_length_max'] = max(flow['fwd_packet_length_max'], len(packet))
-                flow['fwd_packet_length_sum'] += len(packet)
+            
+            is_forward = (ip.src < ip.dst) or (ip.src == ip.dst and transport.sport < transport.dport)
+            
+            if is_forward:
+                flow['forward_packet_count'] += 1
+                flow['forward_byte_count'] += len(packet)
+                flow['forward_packet_length_min'] = min(flow['forward_packet_length_min'], len(packet))
+                flow['forward_packet_length_max'] = max(flow['forward_packet_length_max'], len(packet))
+                flow['forward_packet_length_sum'] += len(packet)
+                flow['forward_header_length'] += len(ip) + len(transport)
+                if flow['forward_packet_count'] > 1:
+                    iat = packet.time - flow['last_time']
+                    flow['forward_iat_total'] += iat
+                    flow['forward_iat_count'] += 1
+                    flow['flow_iat_min'] = min(flow['flow_iat_min'], iat)
+                    flow['flow_iat_max'] = max(flow['flow_iat_max'], iat)
+                if flow['active_start'] is None:
+                    flow['active_start'] = packet.time
+                flow['idle_start'] = None
             else:
-                flow['bwd_packet_count'] += 1
-                flow['bwd_byte_count'] += len(packet)
-                flow['bwd_packet_length_min'] = min(flow['bwd_packet_length_min'], len(packet))
-                flow['bwd_packet_length_max'] = max(flow['bwd_packet_length_max'], len(packet))
-                flow['bwd_packet_length_sum'] += len(packet)
+                flow['backward_packet_count'] += 1
+                flow['backward_byte_count'] += len(packet)
+                flow['backward_packet_length_min'] = min(flow['backward_packet_length_min'], len(packet))
+                flow['backward_packet_length_max'] = max(flow['backward_packet_length_max'], len(packet))
+                flow['backward_packet_length_sum'] += len(packet)
+                flow['backward_header_length'] += len(ip) + len(transport)
+                if flow['backward_packet_count'] > 1:
+                    iat = packet.time - flow['last_time']
+                    flow['backward_iat_total'] += iat
+                    flow['backward_iat_count'] += 1
+                    flow['flow_iat_min'] = min(flow['flow_iat_min'], iat)
+                    flow['flow_iat_max'] = max(flow['flow_iat_max'], iat)
+                if flow['idle_start'] is None:
+                    flow['idle_start'] = packet.time
+                flow['active_start'] = None
 
-            if packet.haslayer(scapy.TCP):
-                tcp = packet.getlayer(scapy.TCP)
-                flow['fwd_psh_flags'] += (tcp.flags & PSH) >> 3
-                flow['bwd_psh_flags'] += (tcp.flags & PSH) >> 3
-                flow['fwd_urg_flags'] += (tcp.flags & URG) >> 5
-                flow['bwd_urg_flags'] += (tcp.flags & URG) >> 5
-                flow['fin_flag_count'] += (tcp.flags & FIN) >> 0
-                flow['syn_flag_count'] += (tcp.flags & SYN) >> 1
-                flow['rst_flag_count'] += (tcp.flags & RST) >> 2
-                flow['psh_flag_count'] += (tcp.flags & PSH) >> 3
-                flow['ack_flag_count'] += (tcp.flags & ACK) >> 4
-                flow['urg_flag_count'] += (tcp.flags & URG) >> 5
+            if TCP in packet:
+                tcp = packet[TCP]
+                flow['fin_flag_count'] += 1 if tcp.flags.F else 0
+                flow['syn_flag_count'] += 1 if tcp.flags.S else 0
+                flow['rst_flag_count'] += 1 if tcp.flags.R else 0
+                flow['psh_flag_count'] += 1 if tcp.flags.P else 0
+                flow['ack_flag_count'] += 1 if tcp.flags.A else 0
+                flow['urg_flag_count'] += 1 if tcp.flags.U else 0
 
-            logging.debug(f"Updated flow: {key} with packet length {len(packet)}")
+            flow['last_time'] = packet.time
 
-def pcap_to_csv(pcap_file, csv_file):
-    pcap = scapy.rdpcap(pcap_file)
-    flows = {}
-    flow_keys = set()
+    # Calculate additional statistics and write to CSV
+    with open(output_csv, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for flow in flows.values():
+            if flow['packet_count'] > 0:
+                flow['duration'] = flow['last_time'] - flow['start_time']
+                flow['flow_bytes_per_sec'] = flow['byte_count'] / flow['duration'] if flow['duration'] > 0 else 0
+                flow['flow_packets_per_sec'] = flow['packet_count'] / flow['duration'] if flow['duration'] > 0 else 0
+                flow['forward_packet_length_mean'] = (flow['forward_packet_length_sum'] / flow['forward_packet_count']) if flow['forward_packet_count'] > 0 else 0
+                flow['backward_packet_length_mean'] = (flow['backward_packet_length_sum'] / flow['backward_packet_count']) if flow['backward_packet_count'] > 0 else 0
+                flow['flow_iat_mean'] = ((flow['forward_iat_total'] + flow['backward_iat_total']) / (flow['forward_iat_count'] + flow['backward_iat_count'])) if (flow['forward_iat_count'] + flow['backward_iat_count']) > 0 else 0
+                flow['flow_iat_std'] = np.std([packet.time - flow['start_time'] for packet in packets]) if len(packets) > 0 else 0
+                flow['down_up_ratio'] = flow['forward_byte_count'] / (flow['backward_byte_count'] if flow['backward_byte_count'] > 0 else 1)  # Avoid division by zero
+                flow['average_packet_size'] = flow['byte_count'] / flow['packet_count'] if flow['packet_count'] > 0 else 0
 
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        # Submit packets to the executor
-        future_to_packet = {executor.submit(process_packet, packet, flows, flow_keys): packet for packet in pcap}
-        
-        # Wait for all packets to be processed
-        for future in concurrent.futures.as_completed(future_to_packet):
+                # Add any additional calculations as needed
+
+                writer.writerow({
+                    'source_ip': flow['source_ip'],
+                    'destination_ip': flow['destination_ip'],
+                    'source_port': flow['source_port'],
+                    'destination_port': flow['destination_port'],
+                    'protocol': flow['protocol'],
+                    'packet_count': flow['packet_count'],
+                    'byte_count': flow['byte_count'],
+                    'forward_packet_count': flow['forward_packet_count'],
+                    'backward_packet_count': flow['backward_packet_count'],
+                    'forward_byte_count': flow['forward_byte_count'],
+                    'backward_byte_count': flow['backward_byte_count'],
+                    'forward_packet_length_min': flow['forward_packet_length_min'],
+                    'forward_packet_length_max': flow['forward_packet_length_max'],
+                    'backward_packet_length_min': flow['backward_packet_length_min'],
+                    'backward_packet_length_max': flow['backward_packet_length_max'],
+                    'forward_packet_length_mean': flow['forward_packet_length_mean'],
+                    'backward_packet_length_mean': flow['backward_packet_length_mean'],
+                    'flow_bytes_per_sec': flow['flow_bytes_per_sec'],
+                    'flow_packets_per_sec': flow['flow_packets_per_sec'],
+                    'flow_iat_mean': flow['flow_iat_mean'],
+                    'flow_iat_std': flow['flow_iat_std'],
+                    'flow_iat_max': flow['flow_iat_max'],
+                    'flow_iat_min': flow['flow_iat_min'],
+                    'forward_psh_flags': flow['forward_psh_flags'],
+                    'backward_psh_flags': flow['backward_psh_flags'],
+                    'forward_urg_flags': flow['forward_urg_flags'],
+                    'backward_urg_flags': flow['backward_urg_flags'],
+                    'forward_header_length': flow['forward_header_length'],
+                    'backward_header_length': flow['backward_header_length'],
+                    'fin_flag_count': flow['fin_flag_count'],
+                    'syn_flag_count': flow['syn_flag_count'],
+                    'rst_flag_count': flow['rst_flag_count'],
+                    'psh_flag_count': flow['psh_flag_count'],
+                    'ack_flag_count': flow['ack_flag_count'],
+                    'urg_flag_count': flow['urg_flag_count'],
+                    'down_up_ratio': flow['down_up_ratio'],
+                    'average_packet_size': flow['average_packet_size'],
+                    'average_forward_segment_size': flow['average_forward_segment_size'],
+                    'average_backward_segment_size': flow['average_backward_segment_size'],
+                    'subflow_forward_packets': flow['subflow_forward_packets'],
+                    'subflow_forward_bytes': flow['subflow_forward_bytes'],
+                    'subflow_backward_packets': flow['subflow_backward_packets'],
+                    'subflow_backward_bytes': flow['subflow_backward_bytes'],
+                    'init_win_bytes_forward': flow['init_win_bytes_forward'],
+                    'init_win_bytes_backward': flow['init_win_bytes_backward'],
+                    'active_mean': flow['active_mean'],
+                    'idle_mean': flow['idle_mean']
+                })
+
+def process_directory(input_dir, output_dir, max_threads):
+    # Get list of all .pcap files in the input directory
+    pcap_files = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.endswith('.pcap')]
+    total_files = len(pcap_files)
+    print(f"Found {total_files} .pcap files in directory {input_dir}")
+
+    def process_file(pcap_file):
+        output_csv = os.path.join(output_dir, os.path.basename(pcap_file) + '.csv')
+        print(f"Processing {pcap_file}...")
+        process_pcap(pcap_file, output_csv)
+
+    with ThreadPoolExecutor(max_workers=max_threads) as executor:
+        futures = [executor.submit(process_file, pcap_file) for pcap_file in pcap_files]
+        for future in as_completed(futures):
             try:
-                future.result()  # This will re-raise any exceptions that occurred during processing
+                future.result()  # Retrieve result or raise exception if any
             except Exception as e:
-                logging.error(f"Packet processing generated an exception: {e}")
+                print(f"Error processing file: {e}")
 
-    # Convert flows to DataFrame
-    data = []
-    for key, flow in flows.items():
-        src_ip, dst_ip, src_port, dst_port, protocol = key
-        # Ensure that we have a valid start and end time
-        duration = (flow['last_time'] - flow['start_time']) if (flow['last_time'] - flow['start_time']) > 0 else 1
-        data.append({
-            'Source IP': src_ip,
-            'Destination IP': dst_ip,
-            'Source Port': src_port,
-            'Destination Port': dst_port,
-            'Protocol': protocol,
-            'Packet Count': flow['packet_count'],
-            'Byte Count': flow['byte_count'],
-            'Forward Packet Count': flow['fwd_packet_count'],
-            'Backward Packet Count': flow['bwd_packet_count'],
-            'Forward Byte Count': flow['fwd_byte_count'],
-            'Backward Byte Count': flow['bwd_byte_count'],
-            'Forward Packet Length Min': flow['fwd_packet_length_min'],
-            'Forward Packet Length Max': flow['fwd_packet_length_max'],
-            'Backward Packet Length Min': flow['bwd_packet_length_min'],
-            'Backward Packet Length Max': flow['bwd_packet_length_max'],
-            'Forward Packet Length Mean': flow['fwd_packet_length_sum'] / (flow['fwd_packet_count'] if flow['fwd_packet_count'] > 0 else 1),
-            'Backward Packet Length Mean': flow['bwd_packet_length_sum'] / (flow['bwd_packet_count'] if flow['bwd_packet_count'] > 0 else 1),
-            'Flow Bytes Per Sec': flow['byte_count'] / duration,
-                        'Flow Packets Per Sec': flow['packet_count'] / duration,
-            'Flow IAT Mean': flow['flow_iat_mean'],
-            'Flow IAT Std': flow['flow_iat_std'],
-            'Flow IAT Max': flow['flow_iat_max'],
-            'Flow IAT Min': flow['flow_iat_min'],
-            'Forward PSH Flags': flow['fwd_psh_flags'],
-            'Backward PSH Flags': flow['bwd_psh_flags'],
-            'Forward URG Flags': flow['fwd_urg_flags'],
-            'Backward URG Flags': flow['bwd_urg_flags'],
-            'Forward Header Length': flow['fwd_header_length'],
-            'Backward Header Length': flow['bwd_header_length'],
-            'FIN Flag Count': flow['fin_flag_count'],
-            'SYN Flag Count': flow['syn_flag_count'],
-            'RST Flag Count': flow['rst_flag_count'],
-            'PSH Flag Count': flow['psh_flag_count'],
-            'ACK Flag Count': flow['ack_flag_count'],
-            'URG Flag Count': flow['urg_flag_count'],
-            'Down Up Ratio': flow['down_up_ratio'],
-            'Average Packet Size': flow['avg_packet_size'],
-            'Average Forward Segment Size': flow['avg_fwd_segment_size'],
-            'Average Backward Segment Size': flow['avg_bwd_segment_size'],
-            'Subflow Forward Packets': flow['subflow_fwd_packets'],
-            'Subflow Forward Bytes': flow['subflow_fwd_bytes'],
-            'Subflow Backward Packets': flow['subflow_bwd_packets'],
-            'Subflow Backward Bytes': flow['subflow_bwd_bytes'],
-            'Init Win Bytes Forward': flow['init_win_bytes_forward'],
-            'Init Win Bytes Backward': flow['init_win_bytes_backward'],
-            'Active Mean': flow['active_mean'],
-            'Idle Mean': flow['idle_mean']
-        })
+def main():
+    parser = argparse.ArgumentParser(description='Process .pcap files into CSV format.')
+    parser.add_argument('-i', '--input', required=True, help='Input directory containing .pcap files')
+    parser.add_argument('-o', '--output', required=True, help='Output directory for CSV files')
+    parser.add_argument('-d', '--debug', action='store_true', help='Enable debug output')
+    
+    args = parser.parse_args()
+    
+    # Determine the number of threads to use
+    max_threads = int(os.cpu_count() * 0.75)  # Use 75% of available CPU threads
 
-    df = pd.DataFrame(data)
-    df.to_csv(csv_file, index=False)
-    logging.debug(f"CSV file created: {csv_file}")
+    if args.debug:
+        print(f"Debug mode enabled")
+        print(f"Input directory: {args.input}")
+        print(f"Output directory: {args.output}")
+        print(f"Max threads: {max_threads}")
 
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <input_pcap> <output_csv>")
-        sys.exit(1)
+    if not os.path.exists(args.input):
+        raise FileNotFoundError(f"Input directory {args.input} does not exist")
+    if not os.path.exists(args.output):
+        os.makedirs(args.output)
+    
+    process_directory(args.input, args.output, max_threads)
 
-    pcap_file = sys.argv[1]
-    csv_file = sys.argv[2]
-    pcap_to_csv(pcap_file, csv_file)
+if __name__ == '__main__':
+    main()
 

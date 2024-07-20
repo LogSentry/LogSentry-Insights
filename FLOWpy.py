@@ -1,11 +1,13 @@
 import argparse
 import csv
 import os
+import numpy as np
 import threading
 import tarfile
 from scapy.all import rdpcap, IP, TCP, UDP
-import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import psutil
 
 # Define the fieldnames for the CSV file
 fieldnames = [
@@ -24,7 +26,19 @@ fieldnames = [
     'active_mean', 'idle_mean'
 ]
 
-def process_pcap(pcap_file, output_csv):
+# Check for CUDA and CuPy availability
+def check_cuda():
+    try:
+        import cupy as cp
+        import GPUtil
+        CUDA_AVAILABLE = len(GPUtil.getGPUs()) > 0
+        return True
+    except ImportError:
+        CUDA_AVAILABLE = False
+        return False
+    
+    
+def process_pcap(pcap_file, output_csv, use_cuda=False):
     flows = {}
     
     packets = rdpcap(pcap_file)
@@ -161,106 +175,78 @@ def process_pcap(pcap_file, output_csv):
                 flow['flow_packets_per_sec'] = flow['packet_count'] / flow['duration'] if flow['duration'] > 0 else 0
                 flow['forward_packet_length_mean'] = (flow['forward_packet_length_sum'] / flow['forward_packet_count']) if flow['forward_packet_count'] > 0 else 0
                 flow['backward_packet_length_mean'] = (flow['backward_packet_length_sum'] / flow['backward_packet_count']) if flow['backward_packet_count'] > 0 else 0
-                flow['flow_iat_mean'] = ((flow['forward_iat_total'] + flow['backward_iat_total']) / (flow['forward_iat_count'] + flow['backward_iat_count'])) if (flow['forward_iat_count'] + flow['backward_iat_count']) > 0 else 0
-                flow['flow_iat_std'] = np.std([packet.time - flow['start_time'] for packet in packets]) if len(packets) > 0 else 0
-                flow['down_up_ratio'] = flow['forward_byte_count'] / (flow['backward_byte_count'] if flow['backward_byte_count'] > 0 else 1)  # Avoid division by zero
-                flow['average_packet_size'] = flow['byte_count'] / flow['packet_count'] if flow['packet_count'] > 0 else 0
+                flow['average_packet_size'] = (flow['byte_count'] / flow['packet_count']) if flow['packet_count'] > 0 else 0
+                flow['average_forward_segment_size'] = (flow['forward_byte_count'] / flow['forward_packet_count']) if flow['forward_packet_count'] > 0 else 0
+                flow['average_backward_segment_size'] = (flow['backward_byte_count'] / flow['backward_packet_count']) if flow['backward_packet_count'] > 0 else 0
+                flow['down_up_ratio'] = (flow['forward_packet_count'] / flow['backward_packet_count']) if flow['backward_packet_count'] > 0 else 0
+                flow['subflow_forward_packets'] = flow['forward_packet_count']
+                flow['subflow_forward_bytes'] = flow['forward_byte_count']
+                flow['subflow_backward_packets'] = flow['backward_packet_count']
+                flow['subflow_backward_bytes'] = flow['backward_byte_count']
+                flow['init_win_bytes_forward'] = 0  # Placeholder
+                flow['init_win_bytes_backward'] = 0  # Placeholder
+                flow['active_mean'] = flow['active_time'] / flow['active_count'] if flow['active_count'] > 0 else 0
+                flow['idle_mean'] = flow['idle_time'] / flow['idle_count'] if flow['idle_count'] > 0 else 0
+                
+            writer.writerow({field: flow.get(field, 0) for field in fieldnames})
 
-                # Add any additional calculations as needed
+def process_tarfile(tar_file, output_dir, use_cuda=False):
+    with tarfile.open(tar_file, 'r:gz') as tar:
+        for member in tar.getmembers():
+            if member.isfile() and member.name.endswith('.pcap'):
+                member_file = tar.extractfile(member)
+                pcap_file = os.path.join(output_dir, os.path.basename(member.name))
+                with open(pcap_file, 'wb') as f:
+                    f.write(member_file.read())
+                process_pcap(pcap_file, pcap_file.replace('.pcap', '.csv'), use_cuda)
 
-                writer.writerow({
-                    'source_ip': flow['source_ip'],
-                    'destination_ip': flow['destination_ip'],
-                    'source_port': flow['source_port'],
-                    'destination_port': flow['destination_port'],
-                    'protocol': flow['protocol'],
-                    'packet_count': flow['packet_count'],
-                    'byte_count': flow['byte_count'],
-                    'forward_packet_count': flow['forward_packet_count'],
-                    'backward_packet_count': flow['backward_packet_count'],
-                    'forward_byte_count': flow['forward_byte_count'],
-                    'backward_byte_count': flow['backward_byte_count'],
-                    'forward_packet_length_min': flow['forward_packet_length_min'],
-                    'forward_packet_length_max': flow['forward_packet_length_max'],
-                    'backward_packet_length_min': flow['backward_packet_length_min'],
-                    'backward_packet_length_max': flow['backward_packet_length_max'],
-                    'forward_packet_length_mean': flow['forward_packet_length_mean'],
-                    'backward_packet_length_mean': flow['backward_packet_length_mean'],
-                    'flow_bytes_per_sec': flow['flow_bytes_per_sec'],
-                    'flow_packets_per_sec': flow['flow_packets_per_sec'],
-                    'flow_iat_mean': flow['flow_iat_mean'],
-                    'flow_iat_std': flow['flow_iat_std'],
-                    'flow_iat_max': flow['flow_iat_max'],
-                    'flow_iat_min': flow['flow_iat_min'],
-                    'forward_psh_flags': flow['forward_psh_flags'],
-                    'backward_psh_flags': flow['backward_psh_flags'],
-                    'forward_urg_flags': flow['forward_urg_flags'],
-                    'backward_urg_flags': flow['backward_urg_flags'],
-                    'forward_header_length': flow['forward_header_length'],
-                    'backward_header_length': flow['backward_header_length'],
-                    'fin_flag_count': flow['fin_flag_count'],
-                    'syn_flag_count': flow['syn_flag_count'],
-                    'rst_flag_count': flow['rst_flag_count'],
-                    'psh_flag_count': flow['psh_flag_count'],
-                    'ack_flag_count': flow['ack_flag_count'],
-                    'urg_flag_count': flow['urg_flag_count'],
-                    'down_up_ratio': flow['down_up_ratio'],
-                    'average_packet_size': flow['average_packet_size'],
-                    'average_forward_segment_size': flow['average_forward_segment_size'],
-                    'average_backward_segment_size': flow['average_backward_segment_size'],
-                    'subflow_forward_packets': flow['subflow_forward_packets'],
-                    'subflow_forward_bytes': flow['subflow_forward_bytes'],
-                    'subflow_backward_packets': flow['subflow_backward_packets'],
-                    'subflow_backward_bytes': flow['subflow_backward_bytes'],
-                    'init_win_bytes_forward': flow['init_win_bytes_forward'],
-                    'init_win_bytes_backward': flow['init_win_bytes_backward'],
-                    'active_mean': flow['active_mean'],
-                    'idle_mean': flow['idle_mean']
-                })
+def process_files(input_dir, output_dir, use_cuda=False, recursive=False):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        
+    if recursive:
+        for root, dirs, files in os.walk(input_dir):
+            for file in files:
+                if file.endswith('.pcap'):
+                    process_pcap(os.path.join(root, file), os.path.join(output_dir, file.replace('.pcap', '.csv')), use_cuda)
+                elif file.endswith('.tar.gz'):
+                    process_tarfile(os.path.join(root, file), output_dir, use_cuda)
+    else:
+        for file in os.listdir(input_dir):
+            if file.endswith('.pcap'):
+                process_pcap(os.path.join(input_dir, file), os.path.join(output_dir, file.replace('.pcap', '.csv')), use_cuda)
+            elif file.endswith('.tar.gz'):
+                process_tarfile(os.path.join(input_dir, file), output_dir, use_cuda)
 
-def process_directory(input_dir, output_dir, max_threads):
-    # Get list of all .pcap files in the input directory
-    pcap_files = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.endswith('.pcap')]
-    total_files = len(pcap_files)
-    print(f"Found {total_files} .pcap files in directory {input_dir}")
-
-    def process_file(pcap_file):
-        output_csv = os.path.join(output_dir, os.path.basename(pcap_file) + '.csv')
-        print(f"Processing {pcap_file}...")
-        process_pcap(pcap_file, output_csv)
-
-    with ThreadPoolExecutor(max_workers=max_threads) as executor:
-        futures = [executor.submit(process_file, pcap_file) for pcap_file in pcap_files]
-        for future in as_completed(futures):
-            try:
-                future.result()  # Retrieve result or raise exception if any
-            except Exception as e:
-                print(f"Error processing file: {e}")
+def get_files_size(path):
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        for filename in filenames:
+            filepath = os.path.join(dirpath, filename)
+            total_size += os.path.getsize(filepath)
+    return total_size
 
 def main():
-    parser = argparse.ArgumentParser(description='Process .pcap files into CSV format.')
-    parser.add_argument('-i', '--input', required=True, help='Input directory containing .pcap files')
+    parser = argparse.ArgumentParser(description='Process PCAP files and extract network traffic features.')
+    parser.add_argument('-i', '--input', required=True, help='Input directory containing PCAP files or TAR.GZ files')
     parser.add_argument('-o', '--output', required=True, help='Output directory for CSV files')
-    parser.add_argument('-d', '--debug', action='store_true', help='Enable debug output')
+    parser.add_argument('-r', '--recursive', action='store_true', help='Recursively process files in subdirectories')
+    parser.add_argument('-d', '--directory', action='store_true', help='Process directory of .pcap files')
+    parser.add_argument('-t', '--tar', action='store_true', help='Process .tar.gz files')
     
     args = parser.parse_args()
     
-    # Determine the number of threads to use
-    max_threads = int(os.cpu_count() * 0.75)  # Use 75% of available CPU threads
-
-    if args.debug:
-        print(f"Debug mode enabled")
-        print(f"Input directory: {args.input}")
-        print(f"Output directory: {args.output}")
-        print(f"Max threads: {max_threads}")
-
-    if not os.path.exists(args.input):
-        raise FileNotFoundError(f"Input directory {args.input} does not exist")
-    if not os.path.exists(args.output):
-        os.makedirs(args.output)
+    use_cuda = check_cuda()
+    input_dir = args.input
+    output_dir = args.output
     
-    process_directory(args.input, args.output, max_threads)
+    # Check if the input directory contains large files that may not fit into RAM
+    total_size = get_files_size(input_dir)
+    if total_size > 25 * 1024 * 1024 * 1024:  # Files larger than 25GB
+        # Dynamic chunk processing can be implemented here if needed
+        print("Files are larger than 25GB. Consider implementing dynamic chunk processing.")
+    
+    process_files(input_dir, output_dir, use_cuda, args.recursive or args.directory)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-

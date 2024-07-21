@@ -32,7 +32,7 @@ This repository contains scripts and notebooks for analyzing network traffic. Th
 
 **Usage Example:**
 
-```bash
+```
 python FLOWpy.py -i /path/to/input -o /path/to/output [options]
 ```
 
@@ -51,7 +51,7 @@ python FLOWpy.py -i /path/to/input -o /path/to/output [options]
 
 Open the notebook in Jupyter:
 
-```bash
+```
 jupyter notebook Dataport.ipynb
 ```
 
@@ -68,30 +68,64 @@ Follow the instructions within the notebook to interact with the data and genera
 - Push to Remote: Push local changes to a remote repository with ease.
 - Branch Management: Simplify branch creation and switching.
 
-**Usage Example:**
-
-```powershell
-.\git-workflow.ps1 -task commit -message "Commit message"
-```
-
 ## Installation
 
 Clone the repository:
 
-```bash
+```
 git clone https://github.com/LogSentry/LogSentry-Insights/tree/test
 cd network-traffic-analysis
 ```
 
 Install Python dependencies:
 
-```bash
+```
 pip install scapy numpy psutil
 ```
 
 Install Jupyter (if not already installed):
 
-```bash
+```
+pip install jupyter
+```
+
+Ensure you have PowerShell installed for running `git-workflow.ps1`.
+
+## Contributing
+
+If you have suggestions or improvements, feel free to submit a pull request or open an issue.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+# Example usage of git-workflow.ps1
+```
+.\git-workflow.ps1 -commit "Fix bug #123" -push
+```
+**Key Features:**
+
+- Commit Changes: Automate the commit process with specified commit messages.
+- Push to Remote: Push local changes to a remote repository with ease.
+- Branch Management: Simplify branch creation and switching.
+
+## Installation
+
+Clone the repository:
+
+```
+git clone https://github.com/LogSentry/LogSentry-Insights/tree/test
+cd network-traffic-analysis
+```
+
+Install Python dependencies:
+
+```
+pip install scapy numpy psutil
+```
+
+Install Jupyter (if not already installed):
+
+```
 pip install jupyter
 ```
 

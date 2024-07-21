@@ -6,6 +6,7 @@
     - [FLOWpy.py](#flowpypy)
     - [Dataport.ipynb](#dataportipynb)
     - [git-workflow.ps1](#gitworkflowps1)
+    - [LogicInsights_LLM_TransferLearning.ipynb](#logicinsights_llm_transferlearningipynb)
 - [Installation](#installation)
 - [Contributing](#contributing)
 - [License](#license)
@@ -91,13 +92,31 @@ pip install jupyter
 
 Ensure you have PowerShell installed for running `git-workflow.ps1`.
 
-## Contributing
+### LogicInsights_LLM_TransferLearning.ipynb
 
-If you have suggestions or improvements, feel free to submit a pull request or open an issue.
+**Description:**
+`LogicInsights_LLM_TransferLearning.ipynb` is a Jupyter Notebook that demonstrates the process of transfer learning using a pre-trained Language Model (LLM) for a specific task. It includes steps for data preparation, model architecture modification, training, and evaluation. The notebook is designed to be user-friendly and provides detailed explanations for each step.
 
-## License
+**Key Features:**
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+- **Data Preparation**: 
+  - Loads and preprocesses the dataset, including tokenization and normalization.
+  - Handles various data formats and ensures compatibility with the model.
+- **Model Architecture**: 
+  - Utilizes a pre-trained Language Model.
+  - Modifies the architecture for the specific task by traning it.
+  - Supports customization of model parameters and layers.
+- **Training**: 
+  - Defines training parameters such as learning rate, batch size, and number of epochs.
+  - Implements techniques to prevent overfitting, such as dropout and early stopping.
+  - Provides real-time monitoring of training progress with visualizations.
+- **Evaluation**: 
+  - Evaluates the model using metrics such as accuracy, precision, recall, and F1-score.
+- **Output**: 
+  - Provides final evaluation metrics and visualizations of the results.
+  - Saves the trained model and evaluation reports for future use.
+  - Generates detailed logs for tracking the experiment.
+
 # Example usage of git-workflow.ps1
 ```
 .\git-workflow.ps1 -commit "Fix bug #123" -push

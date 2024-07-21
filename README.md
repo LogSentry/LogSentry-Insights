@@ -1,127 +1,106 @@
-# Git Workflow PowerShell Script
+# Network Traffic Analysis
 ## Table of Contents
 
 - [Overview](#overview)
-- [Features](#features)
-- [Usage](#usage)
-    - [Commands](#commands)
-    - [Installation](#installation)
-    - [Configuration](#configuration)
-    - [OAuth Authentication](#oauth-authentication)
-    - [Script Functions](#script-functions)
-    - [Dependencies](#dependencies)
-    - [Troubleshooting](#troubleshooting)
+- [Files](#files)
+    - [FLOWpy.py](#flowpypy)
+    - [Dataport.ipynb](#dataportipynb)
+    - [git-workflow.ps1](#gitworkflowps1)
+- [Installation](#installation)
+- [Contributing](#contributing)
 - [License](#license)
-- [Contact](#contact)
 
 ## Overview
 
-This PowerShell script automates the process of managing Git workflows and integrates with Jira and GitHub. It supports task fetching from Jira, branch management, and pull request creation. Additionally, it handles OAuth authentication and token management securely.
+This repository contains scripts and notebooks for analyzing network traffic. The project includes a Python script for extracting network features, a Jupyter notebook for interactive data exploration, and a PowerShell script for managing Git workflows.
 
-## Features
+## Files
 
-- **OAuth Authentication**: Handles secure token storage and retrieval for GitHub and Jira.
-- **Git Operations**: Automates Git branching, committing, and pull request creation.
-- **Jira Integration**: Fetches assigned tasks from Jira, updates task status, and extracts Jira codes from branch names.
-- **Setup**: Configures Git aliases and script paths for easy access.
+### FLOWpy.py
 
-## Usage
+**Description:**
+`FLOWpy.py` is a Python script designed for the extraction and analysis of network flow statistics from .pcap files. It handles large datasets efficiently, supports multi-threaded processing, and includes capabilities for CUDA acceleration if available.
 
-### Commands
+**Key Features:**
 
-1. **Start a New Task**
+- Network Flow Statistics Extraction: Extracts various statistics from network traffic such as packet counts, byte counts, and flow metrics.
+- Chunk Processing: Handles large files by processing them in chunks to avoid memory issues.
+- Multi-Threading: Uses multiple threads to process .pcap files concurrently, improving performance.
+- CUDA Support: Checks for CUDA availability and utilizes it for accelerated processing if possible.
+- Recursive and Compressed File Handling: Supports recursive directory processing and extraction from .tar.gz archives.
+- Logging: Includes logging functionality to aid in debugging and monitoring.
 
-        Starts a new task by fetching an assigned Jira task, creating a new Git branch, and switching to it.
+**Usage Example:**
 
-        ```powershell
-        .\git-workflow.ps1 get
-        ```
+```bash
+python FLOWpy.py -i /path/to/input -o /path/to/output [options]
+```
 
-2. **Complete the Current Task**
+### Dataport.ipynb
 
-        Commits changes, pushes to GitHub, creates a pull request, and optionally updates the Jira issue status.
+**Description:**
+`Dataport.ipynb` is a Jupyter notebook that provides an interactive environment for analyzing and visualizing network traffic data. It allows users to explore data processed by `FLOWpy.py`, generate plots, and perform statistical analyses.
 
-        ```powershell
-        .\git-workflow.ps1 done
-        ```
+**Key Features:**
 
-3. **Setup Git Workflow**
+- Interactive Exploration: Engage with network data through interactive widgets and visualizations.
+- Data Visualization: Create plots and graphs to understand network traffic patterns and statistics.
+- Analysis: Perform statistical analyses to derive insights from the network data.
 
-        Configures the environment by creating necessary scripts and updating Git aliases.
+**How to Use:**
 
-        ```powershell
-        .\git-workflow.ps1 setup
-        ```
+Open the notebook in Jupyter:
 
-### Installation
+```bash
+jupyter notebook Dataport.ipynb
+```
 
-1. **Clone the Repository**
+Follow the instructions within the notebook to interact with the data and generate visualizations.
 
-        Clone this repository to your local machine.
+### git-workflow.ps1
 
-        ```bash
-        git clone https://github.com/LogSentry/LogSentry-Insights/tree/test
-        ```
+**Description:**
+`git-workflow.ps1` is a PowerShell script designed to automate common Git operations, facilitating efficient version control and workflow management.
 
-2. **Run Setup**
+**Key Features:**
 
-        Execute the setup command to configure Git workflow scripts and aliases.
+- Commit Changes: Automate the commit process with specified commit messages.
+- Push to Remote: Push local changes to a remote repository with ease.
+- Branch Management: Simplify branch creation and switching.
 
-        ```powershell
-        .\git-workflow.ps1 setup
-        ```
+**Usage Example:**
 
-### Configuration
+```powershell
+.\git-workflow.ps1 -task commit -message "Commit message"
+```
 
-The script relies on secure token management for GitHub and Jira. Tokens are stored in the user profile directory.
+## Installation
 
-- GitHub Token: Stored as `$env:USERPROFILE\.jira_git_workflow\.github_token`
-- Jira Token: Stored as `$env:USERPROFILE\.jira_git_workflow\.jira_token`
-- Jira URL: Stored in `$env:USERPROFILE\.jira_git_workflow\config.json`
+Clone the repository:
 
-### OAuth Authentication
+```bash
+git clone https://github.com/LogSentry/LogSentry-Insights/tree/test
+cd network-traffic-analysis
+```
 
-On first run, the script will prompt you for your GitHub and Jira OAuth credentials to obtain and store access tokens. Ensure you have OAuth apps set up on both platforms.
+Install Python dependencies:
 
-### Script Functions
+```bash
+pip install scapy numpy psutil
+```
 
-- `Start-NewTask`: Fetches a Jira task, creates a new Git branch, and switches to it.
-- `Complete-Task`: Commits and pushes changes, creates a pull request, and updates Jira issue status.
-- `Setup-GitWorkflow`: Configures environment scripts and Git aliases.
-- `Show-ProgressBar`: Displays a progress bar for script operations.
-- `Get-SecureToken`: Retrieves a secure token from storage.
-- `Save-SecureToken`: Saves a secure token to storage.
-- `Start-OAuthFlow`: Manages OAuth authentication flow.
-- `Get-JiraToken`: Retrieves or obtains a Jira token.
-- `Get-GithubToken`: Retrieves or obtains a GitHub token.
-- `Get-JiraUrl`: Retrieves the Jira URL from configuration or prompts for it.
-- `Check-GitRepo`: Verifies if the current directory is a Git repository.
-- `Check-And-Set-Origin`: Ensures the correct Git origin is set.
-- `Fetch-And-Select-Task`: Fetches assigned Jira tasks and lets the user select one.
-- `Create-And-Switch-Branch`: Creates and switches to a new Git branch based on Jira task.
-- `Extract-JiraCode`: Extracts Jira code from the current Git branch name.
-- `Update-JiraStatus`: Updates the status of a Jira issue.
-- `Get-JiraStatus`: Retrieves the current status of a Jira issue.
-- `Create-PullRequest`: Creates a GitHub pull request for the current branch.
-- `Download-And-Extract`: Downloads and extracts files from Google Drive (external function).
-- `Extract-Tar-Gz`: Extracts tar.gz files using multi-threading (external function).
+Install Jupyter (if not already installed):
 
-### Dependencies
+```bash
+pip install jupyter
+```
 
-- PowerShell: Ensure you have PowerShell installed on your system.
-- Git: Git must be installed and accessible from the command line.
-- OAuth Apps: GitHub and Jira OAuth apps must be configured for token generation.
+Ensure you have PowerShell installed for running `git-workflow.ps1`.
 
-### Troubleshooting
+## Contributing
 
-- Invalid Git Token: Ensure your GitHub and Jira tokens are correctly configured and have the necessary permissions.
-- OAuth Errors: Verify OAuth credentials and redirect URIs are correctly set up in your GitHub and Jira applications.
-- Branch Name Issues: Ensure branch names are formatted correctly and do not contain illegal characters.
+If you have suggestions or improvements, feel free to submit a pull request or open an issue.
 
-### License
+## License
 
-This script is provided as-is without any warranty. You can modify and use it according to your needs.
-
-### Contact
-
-For issues or questions, please open an issue on the [GitHub repository](https://github.com/LogSentry/LogSentry-Insights/tree/test).
+This project is licensed under the MIT License - see the LICENSE file for details.

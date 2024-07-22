@@ -4,18 +4,23 @@ import os
 import numpy as np
 import tarfile
 from scapy.all import rdpcap, IP, TCP, UDP
-from scapy.all import PcapReader
+from scapy.layers.http import HTTP
 import concurrent.futures
 import psutil
 import math
 from decimal import Decimal
 import logging
 import multiprocessing as mp
+from tqdm import tqdm
+import sys
+import glob
+import time
+import ast
 
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 
-# Define the fieldnames for the CSV file... the amout of thimes this shit annyed me is F**king crazyyyyyyyyyy
-fieldnames = [
+# Define the all_fieldnames for the CSV file
+all_fieldnames = [
     'source_ip', 'destination_ip', 'source_port', 'destination_port', 'protocol',
     'flow_duration', 'fwd_pkts_tot', 'bwd_pkts_tot', 'fwd_data_pkts_tot', 'bwd_data_pkts_tot',
     'fwd_pkts_per_sec', 'bwd_pkts_per_sec', 'flow_pkts_per_sec', 'down_up_ratio',
@@ -39,11 +44,22 @@ fieldnames = [
     'average_packet_size', 'start_time', 'last_time', 'fwd_pkts_payload'
 ]
 
+# Parse command-line arguments
+parser = argparse.ArgumentParser(description="Process PCAP files to extract flow metrics.")
+parser.add_argument("-i", "--input", required=True, help="Input PCAP file or directory.")
+parser.add_argument("-o", "--output", required=True, help="Output directory for CSV files.")
+parser.add_argument("-p", "--parameters", required=True, help="Parameters to calculate. Format: \"param1\" or [\"param1\", \"param2\", ...]")
+parser.add_argument("-t", "--tar", action="store_true", help="Enable processing of tar and tar.gz files.")
+
+
+
+# Update all_fieldnames based on user input
+all_fieldnames = parser.parameters
 
 def process_pcap_chunk(packets):
     flow_stats = {}
     for packet in packets:
-        if IP in packet and (TCP in packet or UDP in packet):
+        if IP in packet and (TCP in packet or UDP):
             ip = packet[IP]
             transport = packet[TCP] if TCP in packet else packet[UDP]
             
@@ -152,190 +168,225 @@ def calculate_flow_statistics(flow):
     # Calculate packet rates
     flow['fwd_pkts_per_sec'] = safe_division(flow['fwd_pkts_tot'], flow['flow_duration'])
     flow['bwd_pkts_per_sec'] = safe_division(flow['bwd_pkts_tot'], flow['flow_duration'])
-    flow['flow_pkts_per_sec'] = safe_division(flow['fwd_pkts_tot'] + flow['bwd_pkts_tot'], flow['flow_duration'])
+    flow['flow_pkts_per_sec'] = flow['fwd_pkts_per_sec'] + flow['bwd_pkts_per_sec']
     
     # Calculate payload statistics
-    fwd_payload = np.array([to_float(x) for x in flow['fwd_pkts_payload']])
-    bwd_payload = np.array([to_float(x) for x in flow['bwd_pkts_payload']])
-    flow_payload = np.concatenate([fwd_payload, bwd_payload])
+    flow['fwd_pkts_payload_tot'] = sum(flow['fwd_pkts_payload'])
+    flow['bwd_pkts_payload_tot'] = sum(flow['bwd_pkts_payload'])
+    flow['flow_pkts_payload_tot'] = flow['fwd_pkts_payload_tot'] + flow['bwd_pkts_payload_tot']
     
-    for direction, payload in [('fwd', fwd_payload), ('bwd', bwd_payload), ('flow', flow_payload)]:
-        if len(payload) > 0:
-            flow[f'{direction}_pkts_payload_max'] = float(np.max(payload))
-            flow[f'{direction}_pkts_payload_min'] = float(np.min(payload))
-            flow[f'{direction}_pkts_payload_tot'] = float(np.sum(payload))
-            flow[f'{direction}_pkts_payload_avg'] = float(np.mean(payload))
-            flow[f'{direction}_pkts_payload_std'] = float(np.std(payload))
-        else:
-            flow[f'{direction}_pkts_payload_max'] = flow[f'{direction}_pkts_payload_min'] = flow[f'{direction}_pkts_payload_tot'] = flow[f'{direction}_pkts_payload_avg'] = flow[f'{direction}_pkts_payload_std'] = 0.0
+    flow['fwd_pkts_payload_max'] = max(flow['fwd_pkts_payload'], default=0)
+    flow['fwd_pkts_payload_min'] = min(flow['fwd_pkts_payload'], default=0)
+    flow['fwd_pkts_payload_avg'] = safe_division(flow['fwd_pkts_payload_tot'], len(flow['fwd_pkts_payload']))
+    flow['fwd_pkts_payload_std'] = np.std(flow['fwd_pkts_payload']) if flow['fwd_pkts_payload'] else 0
+    
+    flow['bwd_pkts_payload_max'] = max(flow['bwd_pkts_payload'], default=0)
+    flow['bwd_pkts_payload_min'] = min(flow['bwd_pkts_payload'], default=0)
+    flow['bwd_pkts_payload_avg'] = safe_division(flow['bwd_pkts_payload_tot'], len(flow['bwd_pkts_payload']))
+    flow['bwd_pkts_payload_std'] = np.std(flow['bwd_pkts_payload']) if flow['bwd_pkts_payload'] else 0
+    
+    flow['flow_pkts_payload_max'] = max(flow['fwd_pkts_payload_max'], flow['bwd_pkts_payload_max'])
+    flow['flow_pkts_payload_min'] = min(flow['fwd_pkts_payload_min'], flow['bwd_pkts_payload_min'])
+    flow['flow_pkts_payload_avg'] = safe_division(flow['flow_pkts_payload_tot'], len(flow['fwd_pkts_payload']) + len(flow['bwd_pkts_payload']))
+    flow['flow_pkts_payload_std'] = np.std(flow['fwd_pkts_payload'] + flow['bwd_pkts_payload']) if flow['fwd_pkts_payload'] + flow['bwd_pkts_payload'] else 0
     
     flow['payload_bytes_per_second'] = safe_division(flow['flow_pkts_payload_tot'], flow['flow_duration'])
     
+    # Calculate header statistics
+    flow['fwd_header_size_min'] = safe_division(flow['fwd_header_size_tot'], flow['fwd_pkts_tot'])
+    flow['fwd_header_size_max'] = safe_division(flow['fwd_header_size_tot'], flow['fwd_pkts_tot'])
+    flow['bwd_header_size_min'] = safe_division(flow['bwd_header_size_tot'], flow['bwd_pkts_tot'])
+    flow['bwd_header_size_max'] = safe_division(flow['bwd_header_size_tot'], flow['bwd_pkts_tot'])
+    
     # Calculate IAT statistics
-    fwd_iat = np.array([to_float(x) for x in flow['fwd_iat']])
-    bwd_iat = np.array([to_float(x) for x in flow['bwd_iat']])
-    flow_iat = np.concatenate([fwd_iat, bwd_iat])
+    flow['fwd_iat_max'] = max(flow['fwd_iat'], default=0)
+    flow['fwd_iat_min'] = min(flow['fwd_iat'], default=0)
+    flow['fwd_iat_tot'] = sum(flow['fwd_iat'])
+    flow['fwd_iat_avg'] = safe_division(flow['fwd_iat_tot'], len(flow['fwd_iat']))
+    flow['fwd_iat_std'] = np.std(flow['fwd_iat']) if flow['fwd_iat'] else 0
     
-    for direction, iat in [('fwd', fwd_iat), ('bwd', bwd_iat), ('flow', flow_iat)]:
-        if len(iat) > 0:
-            flow[f'{direction}_iat_max'] = float(np.max(iat))
-            flow[f'{direction}_iat_min'] = float(np.min(iat))
-            flow[f'{direction}_iat_tot'] = float(np.sum(iat))
-            flow[f'{direction}_iat_avg'] = float(np.mean(iat))
-            flow[f'{direction}_iat_std'] = float(np.std(iat))
-        else:
-            flow[f'{direction}_iat_max'] = flow[f'{direction}_iat_min'] = flow[f'{direction}_iat_tot'] = flow[f'{direction}_iat_avg'] = flow[f'{direction}_iat_std'] = 0.0
+    flow['bwd_iat_max'] = max(flow['bwd_iat'], default=0)
+    flow['bwd_iat_min'] = min(flow['bwd_iat'], default=0)
+    flow['bwd_iat_tot'] = sum(flow['bwd_iat'])
+    flow['bwd_iat_avg'] = safe_division(flow['bwd_iat_tot'], len(flow['bwd_iat']))
+    flow['bwd_iat_std'] = np.std(flow['bwd_iat']) if flow['bwd_iat'] else 0
     
-    # Calculate active and idle times
-    active_times = np.array([to_float(t) for t in flow['active_times'] if t > 0])
-    idle_times = np.array([to_float(t) for t in flow['idle_times']])
-    
-    for time_type, times in [('active', active_times), ('idle', idle_times)]:
-        if len(times) > 0:
-            flow[f'{time_type}_max'] = float(np.max(times))
-            flow[f'{time_type}_min'] = float(np.min(times))
-            flow[f'{time_type}_tot'] = float(np.sum(times))
-            flow[f'{time_type}_avg'] = float(np.mean(times))
-            flow[f'{time_type}_std'] = float(np.std(times))
-        else:
-            flow[f'{time_type}_max'] = flow[f'{time_type}_min'] = flow[f'{time_type}_tot'] = flow[f'{time_type}_avg'] = flow[f'{time_type}_std'] = 0.0
-    
-    # Calculate other statistics
-    flow['down_up_ratio'] = safe_division(flow['bwd_pkts_tot'], flow['fwd_pkts_tot'])
-    flow['average_packet_size'] = safe_division(flow['flow_pkts_payload_tot'], flow['fwd_pkts_tot'] + flow['bwd_pkts_tot'])
-    flow['fwd_header_size_min'] = min(to_float(flow['fwd_header_size_tot']), to_float(flow['fwd_pkts_tot']))
-    flow['fwd_header_size_max'] = max(to_float(flow['fwd_header_size_tot']), to_float(flow['fwd_pkts_tot']))
-    flow['bwd_header_size_min'] = min(to_float(flow['bwd_header_size_tot']), to_float(flow['bwd_pkts_tot']))
-    flow['bwd_header_size_max'] = max(to_float(flow['bwd_header_size_tot']), to_float(flow['bwd_pkts_tot']))
+    flow['flow_iat_max'] = max(flow['fwd_iat_max'], flow['bwd_iat_max'])
+    flow['flow_iat_min'] = min(flow['fwd_iat_min'], flow['bwd_iat_min'])
+    flow['flow_iat_tot'] = flow['fwd_iat_tot'] + flow['bwd_iat_tot']
+    flow['flow_iat_avg'] = safe_division(flow['flow_iat_tot'], len(flow['fwd_iat']) + len(flow['bwd_iat']))
+    flow['flow_iat_std'] = np.std(flow['fwd_iat'] + flow['bwd_iat']) if flow['fwd_iat'] + flow['bwd_iat'] else 0
     
     # Calculate subflow statistics
-    flow['fwd_subflow_pkts'] = flow['fwd_pkts_tot']
-    flow['bwd_subflow_pkts'] = flow['bwd_pkts_tot']
+    flow['fwd_subflow_pkts'] = len(flow['fwd_pkts_payload'])
+    flow['bwd_subflow_pkts'] = len(flow['bwd_pkts_payload'])
     flow['fwd_subflow_bytes'] = flow['fwd_pkts_payload_tot']
     flow['bwd_subflow_bytes'] = flow['bwd_pkts_payload_tot']
     
-    # Calculate bulk statistics (simplified version)
-    flow['fwd_bulk_bytes'] = flow['fwd_pkts_payload_tot']
-    flow['bwd_bulk_bytes'] = flow['bwd_pkts_payload_tot']
-    flow['fwd_bulk_packets'] = flow['fwd_pkts_tot']
-    flow['bwd_bulk_packets'] = flow['bwd_pkts_tot']
+    # Calculate bulk statistics
+    flow['fwd_bulk_bytes'] = sum(1 for size in flow['fwd_pkts_payload'] if size > 0)
+    flow['bwd_bulk_bytes'] = sum(1 for size in flow['bwd_pkts_payload'] if size > 0)
+    flow['fwd_bulk_packets'] = sum(1 for size in flow['fwd_pkts_payload'] if size > 0)
+    flow['bwd_bulk_packets'] = sum(1 for size in flow['bwd_pkts_payload'] if size > 0)
+    
     flow['fwd_bulk_rate'] = safe_division(flow['fwd_bulk_bytes'], flow['flow_duration'])
     flow['bwd_bulk_rate'] = safe_division(flow['bwd_bulk_bytes'], flow['flow_duration'])
-
-    # Window sizes
+    
+    # Calculate active and idle times
+    flow['active_max'] = max(flow['active_times'], default=0)
+    flow['active_min'] = min(flow['active_times'], default=0)
+    flow['active_tot'] = sum(flow['active_times'])
+    flow['active_avg'] = safe_division(flow['active_tot'], len(flow['active_times']))
+    flow['active_std'] = np.std(flow['active_times']) if flow['active_times'] else 0
+    
+    flow['idle_max'] = max(flow['idle_times'], default=0)
+    flow['idle_min'] = min(flow['idle_times'], default=0)
+    flow['idle_tot'] = sum(flow['idle_times'])
+    flow['idle_avg'] = safe_division(flow['idle_tot'], len(flow['idle_times']))
+    flow['idle_std'] = np.std(flow['idle_times']) if flow['idle_times'] else 0
+    
+    # Calculate window sizes
     flow['fwd_init_window_size'] = flow['fwd_window_sizes'][0] if flow['fwd_window_sizes'] else 0
     flow['bwd_init_window_size'] = flow['bwd_window_sizes'][0] if flow['bwd_window_sizes'] else 0
     flow['fwd_last_window_size'] = flow['fwd_window_sizes'][-1] if flow['fwd_window_sizes'] else 0
     flow['bwd_last_window_size'] = flow['bwd_window_sizes'][-1] if flow['bwd_window_sizes'] else 0
-
-    # Clean up temporary data
-    del flow['fwd_pkts_payload']
-    del flow['bwd_pkts_payload']
-    del flow['fwd_iat']
-    del flow['bwd_iat']
-    del flow['active_times']
-    del flow['idle_times']
-    del flow['fwd_window_sizes']
-    del flow['bwd_window_sizes']
-
+    
+   
     return flow
 
-def process_pcap(pcap_file, output_csv, chunk_size=5*1024*1024*1024):
-    flow_stats = {}
-    
-    with PcapReader(pcap_file) as pcap_reader:
-        chunk = []
-        for packet in pcap_reader:
-            chunk.append(packet)
-            if len(chunk) * packet.wirelen > chunk_size:
-                chunk_stats = process_pcap_chunk(chunk)
-                for key, value in chunk_stats.items():
-                    if key in flow_stats:
-                        flow_stats[key] = {**flow_stats[key], **value}
+def extract_pcap_info(pcap_file):
+    try:
+        with PcapReader(pcap_file) as packets:
+            chunk_size = 10000
+            flows = {}
+            while True:
+                chunk = packets.read_all(count=chunk_size)
+                if not chunk:
+                    break
+                flow_stats = process_pcap_chunk(chunk)
+                for key, flow in flow_stats.items():
+                    if key not in flows:
+                        flows[key] = flow
                     else:
-                        flow_stats[key] = value
-                chunk = []
-    
-    if chunk:
-        chunk_stats = process_pcap_chunk(chunk)
-        for key, value in chunk_stats.items():
-            if key in flow_stats:
-                flow_stats[key] = {**flow_stats[key], **value}
-            else:
-                flow_stats[key] = value
+                        flows[key] = merge_flows(flows[key], flow)
+            return flows
+    except Exception as e:
+        print(f"An error occurred while processing {pcap_file}: {str(e)}")
+        return {}
 
-    # Calculate final statistics for each flow
-    for key in flow_stats:
-        flow_stats[key] = calculate_flow_statistics(flow_stats[key])
+def merge_flows(flow1, flow2):
+    for key in flow1:
+        if key in ['start_time', 'last_time']:
+            flow1[key] = min(flow1[key], flow2[key]) if key == 'start_time' else max(flow1[key], flow2[key])
+        elif key in ['fwd_iat', 'bwd_iat', 'fwd_pkts_payload', 'bwd_pkts_payload', 'active_times', 'idle_times']:
+            flow1[key] += flow2[key]
+        elif key in ['fwd_window_sizes', 'bwd_window_sizes']:
+            flow1[key] = flow1[key] + flow2[key]
+        else:
+            flow1[key] += flow2[key]
+    return flow1
 
-    with open(output_csv, 'w', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+def filter_flow_attributes(flow, attributes):
+    return {key: value for key, value in flow.items() if key in attributes}
+
+def save_flows_to_csv(flows, output_file, attributes):
+    with open(output_file, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=attributes)
         writer.writeheader()
+        for flow in flows.values():
+            flow = calculate_flow_statistics(flow)
+            filtered_flow = filter_flow_attributes(flow, attributes)
+            writer.writerow(filtered_flow)
+
+def process_pcap_file(pcap_file, output_dir, attributes):
+    try:
+        packets = rdpcap(pcap_file)
+        flow_stats = process_pcap_chunk(packets)
+
         for flow in flow_stats.values():
-            writer.writerow(flow)
+            calculate_flow_statistics(flow)
 
-def process_file(args):
-    file_path, output_dir, chunk_size = args
-    if file_path.endswith('.pcap'):
-        output_csv = os.path.join(output_dir, os.path.basename(file_path).replace('.pcap', '.csv'))
-        process_pcap(file_path, output_csv, chunk_size)
-    elif file_path.endswith('.tar.gz'):
-        with tarfile.open(file_path, 'r:gz') as tar:
-            for member in tar.getmembers():
-                if member.isfile() and member.name.endswith('.pcap'):
-                    member_file = tar.extractfile(member)
-                    pcap_file = os.path.join(output_dir, os.path.basename(member.name))
-                    with open(pcap_file, 'wb') as f:
-                        f.write(member_file.read())
-                    output_csv = pcap_file.replace('.pcap', '.csv')
-                    process_pcap(pcap_file, output_csv, chunk_size)
+        output_file = os.path.join(output_dir, os.path.basename(pcap_file) + '.csv')
+        with open(output_file, 'w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, all_fieldnames=attributes)
+            writer.writeheader()
+            for flow in flow_stats.values():
+                writer.writerow({k: flow.get(k, '') for k in attributes})
 
-def get_optimal_workers():
-    physical_cores = psutil.cpu_count(logical=False)
-    available_memory = psutil.virtual_memory().available / (1024 * 1024 * 1024)
-    
-    workers_by_cores = max(1, physical_cores - 1)
-    workers_by_memory = max(1, int(available_memory / 2))
-    
-    return min(workers_by_cores, workers_by_memory)
+        print(f"Processed {pcap_file} and saved results to {output_file}")
+    except Exception as e:
+        print(f"An error occurred while processing {pcap_file}: {str(e)}")
 
-def process_files(input_dir, output_dir, recursive=False, chunk_size=5*1024*1024*1024):
+
+def extract_and_process_tar(tar_file, output_dir, attributes):
+    try:
+        with tarfile.open(tar_file, 'r:*') as tar:
+            temp_dir = os.path.join(output_dir, 'temp_extracted')
+            os.makedirs(temp_dir, exist_ok=True)
+            tar.extractall(path=temp_dir)
+            
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    if file.endswith('.pcap'):
+                        pcap_file = os.path.join(root, file)
+                        process_pcap_file(pcap_file, output_dir, attributes)
+            
+            # Clean up temporary directory
+            for root, dirs, files in os.walk(temp_dir, topdown=False):
+                for name in files:
+                    os.remove(os.path.join(root, name))
+                for name in dirs:
+                    os.rmdir(os.path.join(root, name))
+            os.rmdir(temp_dir)
+    except Exception as e:
+        print(f"An error occurred while processing {tar_file}: {str(e)}")
+
+def cpu_usage_check():
+    return psutil.cpu_percent() < 70
+
+if __name__ == "__main__":
+    args = parser.parse_args()
+    input_path = args.input
+    output_dir = args.output
+
+    # Parse the parameters input
+    try:
+        if args.parameters.startswith('[') and args.parameters.endswith(']'):
+            attributes = ast.literal_eval(args.parameters)
+            if not isinstance(attributes, list):
+                raise ValueError("Invalid format for multiple parameters")
+        else:
+            attributes = [args.parameters.strip('"')]
+    except:
+        print("Error parsing parameters. Please use the format: \"param1\" or [\"param1\", \"param2\", ...]")
+        sys.exit(1)
+
+    # Validate the provided parameters
+    invalid_params = set(attributes) - set(all_fieldnames)
+    if invalid_params:
+        print(f"Invalid parameters provided: {', '.join(invalid_params)}")
+        print(f"Valid parameters are: {', '.join(all_fieldnames)}")
+        sys.exit(1)
+
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    file_list = []
-    if recursive:
-        for root, dirs, files in os.walk(input_dir):
-            for file in files:
-                if file.endswith(('.pcap', '.tar.gz')):
-                    file_list.append((os.path.join(root, file), output_dir, chunk_size))
+    def process_file(file_path):
+        while not cpu_usage_check():
+            time.sleep(1)  # Wait for 1 second before checking again
+        
+        if file_path.endswith(('.tar', '.tar.gz')) and args.tar:
+            extract_and_process_tar(file_path, output_dir, attributes)
+        elif file_path.endswith('.pcap'):
+            process_pcap_file(file_path, output_dir, attributes)
+
+    if os.path.isfile(input_path):
+        process_file(input_path)
+    elif os.path.isdir(input_path):
+        for file in os.listdir(input_path):
+            file_path = os.path.join(input_path, file)
+            process_file(file_path)
     else:
-        for file in os.listdir(input_dir):
-            if file.endswith(('.pcap', '.tar.gz')):
-                file_list.append((os.path.join(input_dir, file), output_dir, chunk_size))
+        print(f"Invalid input path: {input_path}")
 
-    optimal_workers = get_optimal_workers()
-    
-    with concurrent.futures.ProcessPoolExecutor(max_workers=optimal_workers) as executor:
-        futures = [executor.submit(process_file, args) for args in file_list]
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                future.result()
-            except Exception as exc:
-                print(f'An exception occurred: {exc}')
-
-def main():
-    parser = argparse.ArgumentParser(description='Process PCAP files and extract network traffic features.')
-    parser.add_argument('-i', '--input', required=True, help='Input directory containing PCAP files or TAR.GZ files')
-    parser.add_argument('-o', '--output', required=True, help='Output directory for CSV files')
-    parser.add_argument('-r', '--recursive', action='store_true', help='Recursively process files in subdirectories')
-    parser.add_argument('-d', '--directory', action='store_true', help='Process directory of .pcap files')
-    parser.add_argument('-t', '--tar', action='store_true', help='Process .tar.gz files')
-    parser.add_argument('--chunk-size', type=int, default=5*1024*1024*1024, help='Chunk size for processing large files (in bytes)')
-    
-    args = parser.parse_args()
-    
-    process_files(args.input, args.output, args.recursive or args.directory, args.chunk_size)
-
-if __name__ == "__main__":
-    main()
+    print("Processing complete.")

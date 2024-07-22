@@ -1,0 +1,115 @@
+Metadata-Version: 2.1
+Name: net-ninja
+Version: 0.1
+Summary: A package to generate enhanced network features for attack detection
+Home-page: 
+Author: kanishk thamman
+Author-email: kanishk.thamman@pm.me
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Description-Content-Type: text/markdown
+
+# Net Ninja
+
+This package provides functionality to generate enhanced network features for attack detection from network traffic CSV files.
+
+## Installation
+
+You can install the package using pip:
+
+```
+pip install git+https://github.com/yourusername/net_ninja.git
+```
+
+## Usage
+
+Here's a basic example of how to use the package:
+
+```
+from net_ninja import process_network_csv
+
+# Process the CSV and get the enhanced DataFrame
+enhanced_df = process_network_csv('path/to/your/input_file.csv')
+
+# Optionally, save the result to a new CSV file
+enhanced_df.to_csv('enhanced_features.csv', index=False)
+```
+
+You can also specify an output path directly:
+
+```
+process_network_csv('path/to/your/input_file.csv', 'path/to/output_file.csv')
+```
+
+### Features
+
+This package generates various network traffic features including:
+
+- Traffic volume metrics
+- Protocol-specific features
+- IP address diversity
+- Time-based features
+- Payload analysis
+- Flag analysis
+- Packet length statistics
+- Flow inter-arrival time statistics
+- Active and idle time
+- Subflow statistics
+- Window size statistics
+- Packet and byte count ratios
+- PSH and URG flag ratios
+- Average packet size
+- Geolocation of source IP addresses
+
+### Requirements
+
+- pandas
+- numpy
+- requests
+- scipy
+
+### License
+
+This project is licensed under the MIT License.
+
+### Instructions to Create and Use the Package
+
+1. **Create the Directory Structure**:
+    - Create a directory named `net_ninja`.
+    - Inside `net_ninja`, create another directory also named `net_ninja`.
+    - Create `__init__.py` and `generator.py` inside the inner `net_ninja` directory.
+    - Create `setup.py` and `README.md` in the outer `net_ninja` directory.
+
+2. **Add the Code to the Files**:
+    - Copy the provided code into the respective files.
+
+3. **Install the Package**:
+    - Navigate to the outer `net_ninja` directory (the one containing `setup.py`).
+    - Run the following command to install the package locally:
+
+      ```
+      pip install .
+      ```
+
+4. **Use the Package**:
+    - You can now import and use the `process_network_csv` function in your  scripts:
+
+      ```
+      from net_ninja import process_network_csv
+
+      # Process the CSV and get the enhanced DataFrame
+      enhanced_df = process_network_csv('path/to/your/input_file.csv')
+
+      # Optionally, save the result to a new CSV file
+      enhanced_df.to_csv('enhanced_features.csv', index=False)
+      ```
+
+5. **Command-Line Usage**:
+    - You can also run the script directly from the command line:
+
+      ```
+       net_ninja/generator.py path/to/your/input_file.csv
+      ```
+
+This setup allows you to use `net_ninja` as a package, making it easy to integrate into other projects and share with others.

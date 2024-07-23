@@ -1,5 +1,7 @@
 README.md
 setup.py
+net_ninja/__init__.py
+net_ninja/generator.py
 net_ninja.egg-info/PKG-INFO
 net_ninja.egg-info/SOURCES.txt
 net_ninja.egg-info/dependency_links.txt

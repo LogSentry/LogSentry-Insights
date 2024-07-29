@@ -7,6 +7,7 @@
     - [Dataport.ipynb](#dataportipynb)
     - [git-workflow.ps1](#gitworkflowps1)
     - [LogicInsights_LLM_TransferLearning.ipynb](#logicinsights_llm_transferlearningipynb)
+    - [LayerbyLayer.ipynb](#layerbylayeripynb)
 - [Installation](#installation)
 - [Contributing](#contributing)
 - [License](#license)
@@ -126,6 +127,55 @@ Ensure you have PowerShell installed for running `git-workflow.ps1`.
 - Commit Changes: Automate the commit process with specified commit messages.
 - Push to Remote: Push local changes to a remote repository with ease.
 - Branch Management: Simplify branch creation and switching.
+
+### LayerbyLayer.ipynb
+
+**Description:**
+`LayerbyLayer.ipynb` is a Jupyter Notebook that provides an in-depth exploration of neural network layers and their operations. It includes detailed explanations and visualizations of various layers, their forward and backward propagation, and the role of each layer in training a neural network.
+
+**Key Features:**
+
+- **Layer-by-Layer Analysis**: 
+  - Explains the purpose and function of different types of neural network layers (e.g., Dense, Convolutional).
+  - Provides visualizations of layer operations and their impact on the data.
+- **Forward Propagation**: 
+  - Demonstrates how data flows through each layer during forward propagation.
+- **Backward Propagation**: 
+  - Illustrates how gradients are calculated and propagated backward through the network.
+- **Gradient Computation**: 
+  - Includes detailed derivations and examples of gradient calculations for various layers.
+  - Shows how gradients are used to update weights and biases.
+
+**How to Use:**
+
+Open the notebook in Jupyter:
+
+```
+jupyter notebook LayerbyLayer.ipynb
+```
+
+Follow the instructions within the notebook to explore neural network layers and their operations.
+
+## Installation
+
+Clone the repository:
+
+```
+git clone https://github.com/LogSentry/LogSentry-Insights/tree/test
+cd network-traffic-analysis
+```
+
+Install Python dependencies:
+
+```
+pip install scapy numpy psutil
+```
+
+Install Jupyter (if not already installed):
+
+```
+pip install jupyter
+```
 
 ## Installation
 
